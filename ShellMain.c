@@ -5,6 +5,10 @@
 #include<unistd.h>
 #include<dirent.h>
 #include<errno.h>
+#include<sys/types.h>
+#include<sys/stat.h>
+#include<fcntl.h>
+
 
 //Function getting subdirecories from current dir.
 char** getSubdir(char *address) {
@@ -24,6 +28,65 @@ char** getSubdir(char *address) {
   free(dir);
   free(entry);
   return subdir;
+}
+
+//Functions from execute.c
+void execute_normal(char **argv)
+{
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid < 0) 
+	{
+		printf("ERROR fork failed\n");
+		exit(1);
+	}
+	else if (pid == 0) //child thread
+	{
+		if (execvp(*argv, argv) < 0)
+		{
+			perror("execvp");
+			exit(1);
+		}	
+	}
+	else
+	{
+		while (wait(&status) != pid) {} //parent, waits for completion
+	}
+
+}
+
+void execute_redirect(char **argv, char *location)
+{
+	pid_t pid;
+	int status;
+	int defout;
+	int fd;
+
+	pid = fork();
+	if (pid < 0) 
+	{
+		printf("ERROR fork failed\n");
+		exit(1);
+	}
+	else if (pid == 0) //child thread
+	{
+		defout = dup(1);
+		fd=open(location ,O_RDWR|O_CREAT,0644);
+		dup2(fd,1);
+		if (execvp(*argv, argv) < 0)
+		{
+			perror("execvp");
+			exit(1);
+		}
+		close(fd);	
+	}
+	else
+	{
+		while (wait(&status) != pid) {} //parent, waits for completion
+	}
+
 }
 
 //Shall Machine Process
@@ -85,10 +148,12 @@ int main(int argc, char const *argv[]) {
       } else if(strcmp(args[0], "cd") == 0) {
         char **subdir = getSubdir(current);
         int i = 0;
+        int found = 0;
         while(subdir[i] != NULL) {
           if(strcmp(args[1], "..") == 0) {
             chdir("..");
             current = getcwd(strBuffer, 200);
+            found = 1;
             break;
           } else if(strcmp(args[1], subdir[i]) == 0){
             printf("target: %s\n", subdir[i]);
@@ -98,9 +163,13 @@ int main(int argc, char const *argv[]) {
               printf("Can't change directory.\n");
               current = getcwd(strBuffer, 200);
             }
+            found = 1;
             break;
           }
           i++;
+        }
+        if(found == 0) {
+          printf("Directory is not found.\n");
         }
         free(subdir);
         
@@ -148,29 +217,37 @@ int main(int argc, char const *argv[]) {
           i++;
         }
         cppname[i-1] = '\0';
-        i = 0;
+        if(strcmp(args[1], ">") == 0) {
+          execute_redirect(args, args[2]);
+        } else {
+          execute_normal(args);
+        }
+        
+        free(cppname);
+        free(subdir);
+        
+      //print output
+      } else if(strcmp(args[0], "cat") == 0) {
+        char **subdir = getSubdir(current);
+        int i = 0;
+        int found = 0;
         while(subdir[i] != NULL) {
-          if(strcmp(subdir[i], cppname) == 0) {
+          if(strcmp(args[1], subdir[i]) == 0){
             char *command = malloc(sizeof(char) * 100);
-            strcpy(command, "g++ ");
-            strcat(command, cppname);
+            strcpy(command, "cat ");
+            strcat(command, args[1]);
             system(command);
-            strcpy(command, "./a.out ");
-            i = 1;
-            while(args[i] != NULL) {
-              strcat(command, args[i]);
-              strcat(command, " ");
-              i++;
-            }
-            system(command);
+            found = 1;
             free(command);
             break;
           }
           i++;
         }
-        
-        free(cppname);
+        if(found == 0) {
+          printf("File is not found.\n");
+        }
         free(subdir);
+      
       //Not a registered commeand
       }else {
         printf("Cannot Resolve symbol: %s\n", args[0]);
